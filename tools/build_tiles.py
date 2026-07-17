@@ -29,10 +29,11 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def terrain_relief(heights: np.ndarray) -> np.ndarray:
-    """Render only elevation and slope. No biome IDs or structure data are used."""
+def biome_relief(heights: np.ndarray, biome_rgb: np.ndarray) -> np.ndarray:
+    """Blend Minecraft biome colors with terrain hillshade, similar to seed-map renderers."""
     h = np.asarray(heights, dtype=np.float32)
     h = np.nan_to_num(h, nan=SEA_LEVEL, posinf=320.0, neginf=-64.0)
+    rgb = np.asarray(biome_rgb, dtype=np.float32).copy()
 
     gx = np.empty_like(h)
     gz = np.empty_like(h)
@@ -43,42 +44,31 @@ def terrain_relief(heights: np.ndarray) -> np.ndarray:
     gz[0, :] = h[1, :] - h[0, :]
     gz[-1, :] = h[-1, :] - h[-2, :]
 
-    # North-west light. Strong enough to show ridges and valleys clearly.
-    nz = np.full_like(h, 3.2)
+    # Strong north-west hillshade, matching the raised terrain look in Chunkbase-like maps.
+    nz = np.full_like(h, 2.25)
     inv = 1.0 / np.sqrt(gx * gx + gz * gz + nz * nz)
-    shade = (-gx * 0.56 - gz * 0.56 + nz * 0.68) * inv
-    shade = np.clip((shade + 0.55) / 1.55, 0.0, 1.0)
+    light = (-gx * 0.58 - gz * 0.58 + nz * 0.62) * inv
+    shade = np.clip((light + 0.75) / 1.50, 0.0, 1.0)
 
-    # Hypsometric terrain tint based only on elevation.
-    stops = np.array([-64, 32, 55, 62, 64, 82, 112, 150, 205, 320], dtype=np.float32)
-    colors = np.array([
-        [18, 42, 60],    # deep ocean trench
-        [25, 65, 88],
-        [42, 91, 112],
-        [80, 129, 139],  # shallow water
-        [170, 160, 116], # coastline
-        [120, 128, 91],
-        [116, 108, 84],
-        [113, 103, 93],
-        [153, 151, 146],
-        [226, 229, 229], # highest peaks
-    ], dtype=np.float32)
+    # Increase biome saturation/contrast before relief shading.
+    gray = rgb.mean(axis=2, keepdims=True)
+    rgb = gray + (rgb - gray) * 1.38
+    rgb = (rgb - 128.0) * 1.10 + 128.0
 
-    flat = h.ravel()
-    rgb = np.empty((flat.size, 3), dtype=np.float32)
-    for c in range(3):
-        rgb[:, c] = np.interp(flat, stops, colors[:, c])
-    rgb = rgb.reshape(h.shape + (3,))
+    illumination = 0.45 + shade * 0.88
+    rgb *= illumination[..., None]
 
-    # Preserve ocean/land separation while avoiding biome-like coloration.
-    illumination = 0.58 + shade * 0.58
-    contour = np.mod(np.maximum(h, SEA_LEVEL) - SEA_LEVEL, 16.0)
-    contour_line = np.where((h >= SEA_LEVEL) & ((contour < 0.75) | (contour > 15.25)), 0.90, 1.0)
-    rgb *= illumination[..., None] * contour_line[..., None]
+    # Snow caps on high terrain and subtle pale rock on major peaks.
+    snow = np.clip((h - 150.0) / 55.0, 0.0, 1.0)[..., None]
+    rgb = rgb * (1.0 - snow * 0.72) + np.array([245, 248, 250], dtype=np.float32) * snow * 0.72
 
-    # Coastline emphasis.
-    coast = np.abs(h - SEA_LEVEL) < 1.4
-    rgb[coast] *= 1.13
+    # Emphasize shorelines and deep water while retaining biome colors.
+    coast = np.abs(h - SEA_LEVEL) < 1.5
+    rgb[coast] = np.clip(rgb[coast] * 1.18, 0, 255)
+    underwater = h < SEA_LEVEL
+    depth = np.clip((SEA_LEVEL - h) / 45.0, 0.0, 1.0)
+    rgb[underwater] *= (1.0 - depth[underwater, None] * 0.28)
+
     return np.clip(rgb, 0, 255).astype(np.uint8)
 
 
@@ -150,13 +140,19 @@ def main() -> None:
         raise SystemExit(f"output-size must be {WORLD_SIZE} for one pixel per block")
 
     height_path = args.raw_dir / "height.f32"
-    expected = source_size * source_size * 4
-    if not height_path.is_file() or height_path.stat().st_size != expected:
+    biome_path = args.raw_dir / "biome.rgb"
+    expected_height = source_size * source_size * 4
+    expected_biome = source_size * source_size * 3
+    if not height_path.is_file() or height_path.stat().st_size != expected_height:
         actual = height_path.stat().st_size if height_path.exists() else 0
-        raise SystemExit(f"Unexpected height.f32 size: {actual} != {expected}")
+        raise SystemExit(f"Unexpected height.f32 size: {actual} != {expected_height}")
+    if not biome_path.is_file() or biome_path.stat().st_size != expected_biome:
+        actual = biome_path.stat().st_size if biome_path.exists() else 0
+        raise SystemExit(f"Unexpected biome.rgb size: {actual} != {expected_biome}")
 
     heights = np.memmap(height_path, dtype="<f4", mode="r", shape=(source_size, source_size))
-    relief = terrain_relief(heights)
+    biome_rgb = np.memmap(biome_path, dtype=np.uint8, mode="r", shape=(source_size, source_size, 3))
+    relief = biome_relief(heights, biome_rgb)
     source = Image.fromarray(relief, mode="RGB")
 
     output = args.output
@@ -180,7 +176,7 @@ def main() -> None:
         "minecraftVersion": VERSION,
         "generator": "cubiomes approximate elevation",
         "generatorCommit": "e61f90580cbdd883214a8054670dacae655e59c0",
-        "terrainMode": "elevation-only relief; no biome colors or structures",
+        "terrainMode": "biome colors with elevation hillshade; no structures",
         "bounds": {"minX": MIN_COORD, "maxX": MAX_COORD, "minZ": MIN_COORD, "maxZ": MAX_COORD},
         "sourceHeightSamples": source_size,
         "blocksPerHeightSample": 4,
