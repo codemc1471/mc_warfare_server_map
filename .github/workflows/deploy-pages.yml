@@ -1,0 +1,77 @@
+name: Build terrain and deploy Pages
+
+on:
+  push:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          pip-install: "-r requirements.txt"
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Fetch pinned Cubiomes source
+        shell: bash
+        run: |
+          mkdir -p vendor/cubiomes
+          git init -q vendor/cubiomes
+          git -C vendor/cubiomes remote add origin https://github.com/Cubitect/cubiomes.git
+          git -C vendor/cubiomes fetch --depth 1 origin e61f90580cbdd883214a8054670dacae655e59c0
+          git -C vendor/cubiomes checkout --detach -q FETCH_HEAD
+
+      - name: Compile terrain renderer
+        shell: bash
+        run: |
+          make -C vendor/cubiomes -j2
+          mkdir -p .build/raw
+          cc -O3 -fwrapv -Ivendor/cubiomes tools/render_map.c vendor/cubiomes/libcubiomes.a -lm -o .build/render_map
+
+      - name: Generate seed terrain
+        shell: bash
+        run: .build/render_map 7748490339196353958 -10000 10000 .build/raw
+
+      - name: Build static tile pyramid
+        shell: bash
+        run: |
+          rm -rf dist
+          cp -R web dist
+          mkdir -p dist/assets/tiles
+          python tools/build_tiles.py --raw-dir .build/raw --output dist/assets/tiles --size 5000
+          touch dist/.nojekyll
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
