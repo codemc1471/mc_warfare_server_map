@@ -171,7 +171,7 @@
 
     if (manifest?.levels?.length) {
       state.source = { type: "tiles", manifest };
-      sourceBadge.textContent = "Cubiomes 지형";
+      sourceBadge.textContent = "고도 지형도 20K";
       sourceBadge.className = "badge badge-exact";
       loadingOverlay.classList.add("is-hidden");
       requestRender();
