@@ -57,7 +57,7 @@ jobs:
           rm -rf dist
           cp -R web dist
           mkdir -p dist/assets/tiles
-          python tools/build_tiles.py --raw-dir .build/raw --output dist/assets/tiles --size 5000
+          python tools/build_tiles.py --raw-dir .build/raw --output dist/assets/tiles --source-size 5000 --output-size 20000
           touch dist/.nojekyll
 
       - name: Upload Pages artifact
