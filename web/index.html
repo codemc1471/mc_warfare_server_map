@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#151816" />
+  <meta name="description" content="Minecraft Java 1.20.1 seed terrain map with browser-saved custom pins." />
+  <title>Seed Terrain · 7748490339196353958</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main id="app">
+    <canvas id="mapCanvas" aria-label="마인크래프트 시드 지형 지도"></canvas>
+
+    <header class="topbar glass">
+      <div class="brand-group">
+        <button id="sidebarToggle" class="icon-button mobile-only" type="button" aria-label="핑 목록 열기">☰</button>
+        <div class="brand-mark" aria-hidden="true">◆</div>
+        <div>
+          <div class="brand-title">Seed Terrain</div>
+          <div class="brand-subtitle">지형 전용 · 구조물 표시 없음</div>
+        </div>
+      </div>
+
+      <div class="seed-group">
+        <span class="label">SEED</span>
+        <button id="copySeed" class="seed-value" type="button" title="시드 복사">7748490339196353958</button>
+        <span class="badge">Java 1.20.1</span>
+        <span id="sourceBadge" class="badge badge-loading">지도 확인 중</span>
+      </div>
+
+      <form id="gotoForm" class="goto-form" autocomplete="off">
+        <label><span>X</span><input id="gotoX" type="number" min="-10000" max="10000" step="1" value="0" /></label>
+        <label><span>Z</span><input id="gotoZ" type="number" min="-10000" max="10000" step="1" value="0" /></label>
+        <button type="submit">이동</button>
+      </form>
+    </header>
+
+    <nav class="map-controls glass" aria-label="지도 조작">
+      <button id="zoomIn" class="control-button" type="button" title="확대">＋</button>
+      <button id="zoomOut" class="control-button" type="button" title="축소">−</button>
+      <div class="control-separator"></div>
+      <button id="fitMap" class="control-button text-button" type="button" title="전체 범위 보기">전체</button>
+      <button id="centerMap" class="control-button text-button" type="button" title="0, 0으로 이동">0,0</button>
+      <div class="control-separator"></div>
+      <button id="gridToggle" class="control-button text-button is-active" type="button" aria-pressed="true">격자</button>
+    </nav>
+
+    <aside id="sidebar" class="sidebar glass" aria-label="핑 관리">
+      <div class="sidebar-header">
+        <div>
+          <h1>내 핑</h1>
+          <p>우클릭 또는 길게 눌러 추가</p>
+        </div>
+        <button id="sidebarClose" class="icon-button mobile-only" type="button" aria-label="핑 목록 닫기">×</button>
+      </div>
+
+      <div class="sidebar-actions">
+        <button id="addCenterPing" type="button">화면 중앙에 핑</button>
+        <button id="exportPings" type="button">내보내기</button>
+        <button id="importPings" type="button">가져오기</button>
+        <input id="importInput" type="file" accept="application/json,.json" hidden />
+      </div>
+
+      <div id="pingEmpty" class="empty-state">
+        <div class="empty-pin">●</div>
+        <strong>저장된 핑이 없습니다</strong>
+        <span>지도에서 우클릭해 위치를 기록하세요.</span>
+      </div>
+      <div id="pingList" class="ping-list"></div>
+
+      <div class="storage-note">
+        <span aria-hidden="true">▣</span>
+        <span>핑은 이 브라우저의 로컬 저장소에만 저장됩니다.</span>
+      </div>
+    </aside>
+
+    <div class="bottom-status glass">
+      <div><span class="status-label">커서</span><strong id="cursorCoords">X 0 · Z 0</strong></div>
+      <div><span class="status-label">청크</span><strong id="chunkCoords">0, 0</strong></div>
+      <div><span class="status-label">중심</span><strong id="centerCoords">X 0 · Z 0</strong></div>
+      <div><span class="status-label">배율</span><strong id="zoomStatus">100%</strong></div>
+      <div class="range-status">범위 −10,000 ~ +10,000</div>
+    </div>
+
+    <div id="loadingOverlay" class="loading-overlay">
+      <div class="loader"></div>
+      <strong>지형 지도를 불러오는 중</strong>
+      <span>시드 7748490339196353958</span>
+    </div>
+
+    <dialog id="pingDialog" class="ping-dialog">
+      <form id="pingForm" method="dialog">
+        <div class="dialog-title-row">
+          <div>
+            <span class="dialog-eyebrow">CUSTOM PING</span>
+            <h2 id="dialogTitle">핑 추가</h2>
+          </div>
+          <button id="dialogClose" class="icon-button" type="button" aria-label="닫기">×</button>
+        </div>
+
+        <label class="field full-field">
+          <span>이름</span>
+          <input id="pingName" type="text" maxlength="40" placeholder="예: 기지 후보" required />
+        </label>
+
+        <div class="field-row">
+          <label class="field">
+            <span>X 좌표</span>
+            <input id="pingX" type="number" min="-10000" max="10000" step="1" required />
+          </label>
+          <label class="field">
+            <span>Z 좌표</span>
+            <input id="pingZ" type="number" min="-10000" max="10000" step="1" required />
+          </label>
+        </div>
+
+        <fieldset class="color-field">
+          <legend>색상</legend>
+          <div id="colorOptions" class="color-options"></div>
+        </fieldset>
+
+        <div class="dialog-actions">
+          <button id="deleteDialogPing" class="danger-button" type="button" hidden>삭제</button>
+          <span class="dialog-spacer"></span>
+          <button id="dialogCancel" class="secondary-button" type="button">취소</button>
+          <button class="primary-button" type="submit">저장</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </main>
+  <script src="./app.js" defer></script>
+</body>
+</html>
